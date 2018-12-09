@@ -3,6 +3,7 @@
                                 Copyright © 2018, Zigfred & Nik.S
     05.12.2018 v0.1
     06.12.2018 v0.2 add DS18B20
+    06.12.2018 v0.3 
 \*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*/
 /*******************************************************************\
     Сервер tt-server ArduinoJson выдает данные: 
@@ -50,6 +51,9 @@ unsigned long flowSensorOldTime = 0;
 void setup() {
   Serial.begin(9600);
   while (!Serial) continue;
+
+  pinMode( A1, INPUT );
+  pinMode( A2, INPUT );
 
   pinMode(flowSensorPin, INPUT);
   digitalWrite(flowSensorPin, HIGH);
@@ -104,7 +108,7 @@ void httpResponse() {
   // Create the root object
   JsonObject& root = jsonBuffer.createObject();
   
-  root["TTKotel"] ="v0.2 ";
+  root["TTKotel"] ="v0.3 ";
   root["pressure"] = getPressureData();
   root["tempSmoke"] = getPT100Data();
   root["tempTTOut"] = getPT1000Data();
@@ -152,17 +156,29 @@ float getPressureData() {
             function to measurement temperature PT100
 \*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*/
 float getPT100Data() {
-  int aA1 = analogRead(A1);
-  Serial.print("  PT100 = ");
-  Serial.print(aA1);
 
-  //Rpt = (aA0 * R / (1024 - aA0))
-  float Rpt100 = (aA1 * 980 / (1024 - aA1));
-  Serial.print("   Rpt100 = ");
-  Serial.print(Rpt100);
+  float koefB = 0.3850; // B-коэффициент
+  int nominalR = 1050; // сопротивление дополнительного резистора
+  int data0PT100 = 100; // сопротивления PT100 при 0 градусах
 
-  float tempPT100 = ((Rpt100-100) / 0.385 );
-  Serial.print("  tempPT100 = ");
+  int valuePT100 = analogRead(A1);
+  Serial.print("  valuePT100 = ");
+  Serial.print(valuePT100);
+
+//   Rpt=(float)( A1 * R / (1023 - A1 ));
+  float resistancePT100 = 1023 - valuePT100; 
+  resistancePT100 = (float)(1.0 / resistancePT100);
+ // resistancePT100 /= (float)(resistancePT100);
+  resistancePT100 *= valuePT100;
+  resistancePT100 *= nominalR;
+  Serial.print("  resistancePT100 = ");
+  Serial.print(resistancePT100);
+
+  //tempCpt = ((Rpt-100) / 0.385 );
+  float tempPT100 = resistancePT100;
+  tempPT100 -= data0PT100;
+  tempPT100 /= koefB;
+  Serial.print("   tempPT100 = ");
   Serial.println(tempPT100);
 
   return tempPT100;
@@ -172,15 +188,29 @@ float getPT100Data() {
             function to measurement temperature PT1000  
 \*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*/
 float getPT1000Data() {
-  int aA2 = analogRead(A2);
-  Serial.print("   PT1000 = ");
-  Serial.print(aA2);
-  //Rpt = (aA0 * R / (1024 - aA0))
-  float Rpt1000 = (aA2 * 4670 / (1024 - aA2));
-  Serial.print("    Rpt1000 = ");
-  Serial.print(Rpt1000);
 
-  float tempPT1000 = ((Rpt1000-100) / 0.385 );
+ float koefB = 0.3950; // B-коэффициент
+  int nominalR = 10000; // сопротивление дополнительного резистора
+  int data0PT1000 = 1000; // сопротивления PT1000 при 0 градусах
+
+  int valuePT1000 = analogRead(A2);
+  valuePT1000 -= 100;
+  Serial.print("  valuePT1000 = ");
+  Serial.print(valuePT1000);
+
+//   Rpt=(float)( A1 * R / (1024 - A1 ));
+  float resistancePT1000 = 1023 - valuePT1000; 
+  resistancePT1000 = (float)(1.0 / resistancePT1000);
+ // resistancePT1000 /= (float)(resistancePT1000);
+  resistancePT1000 *= valuePT1000;
+  resistancePT1000 *= nominalR;
+  Serial.print("  resistancePT1000 = ");
+  Serial.print(resistancePT1000);
+
+  //tempCpt = ((Rpt-1000) / 0.385 );
+  float tempPT1000 = resistancePT1000;
+  tempPT1000 -= data0PT1000;
+  tempPT1000 /= koefB;
   Serial.print("   tempPT1000 = ");
   Serial.println(tempPT1000);
 
