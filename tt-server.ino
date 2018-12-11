@@ -23,7 +23,7 @@
 #include <DallasTemperature.h>
 
 byte mac[] = {0xDE, 0xAD, 0xBE, 0xEF, 0xFF, 0xED};
-EthernetServer server(80);
+EthernetServer server(40246);
 
 // YF-B5 - flow sensor
 // PT100
@@ -76,7 +76,7 @@ void setup() {
             loop
 \*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*/
 void loop() {
-  sensorsDS.requestTemperatures();    // Command to get temperatures
+
   httpResponse();
 }
 
@@ -101,18 +101,21 @@ void httpResponse() {
   // Read the request (we ignore the content in this example)
   while (client.available()) client.read();
 
+  sensorsDS.requestTemperatures();    // Command to get temperatures
+
   // Allocate JsonBuffer
   // Use arduinojson.org/assistant to compute the capacity.
-  StaticJsonBuffer<500> jsonBuffer;
+  StaticJsonBuffer<300> jsonBuffer;
 
   // Create the root object
   JsonObject& root = jsonBuffer.createObject();
   
-  root["TTKotel"] ="v0.3 ";
+  root["TTKotel"] =" v0.3 ";
   root["pressure"] = getPressureData();
   root["tempSmoke"] = getPT100Data();
   root["tempTTOut"] = getPT1000Data();
-  root["litersTotal"] = getFlowData();
+  root["L/min"] = getFlowData();
+//  root["litersTotal"] = getFlowData();
   root["tempTTinIndx"] = sensorsDS.getTempCByIndex(0);
   root["tempInverseIndx"] = sensorsDS.getTempCByIndex(1);
 
@@ -158,7 +161,7 @@ float getPressureData() {
 float getPT100Data() {
 
   float koefB = 0.3850; // B-коэффициент
-  int nominalR = 1050; // сопротивление дополнительного резистора
+  int nominalR = 1025; // сопротивление дополнительного резистора
   int data0PT100 = 100; // сопротивления PT100 при 0 градусах
 
   int valuePT100 = analogRead(A1);
@@ -189,12 +192,12 @@ float getPT100Data() {
 \*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*/
 float getPT1000Data() {
 
- float koefB = 0.3950; // B-коэффициент
-  int nominalR = 10000; // сопротивление дополнительного резистора
+ float koefB = 0.3850; // B-коэффициент
+  int nominalR = 1505; // сопротивление дополнительного резистора
   int data0PT1000 = 1000; // сопротивления PT1000 при 0 градусах
 
   int valuePT1000 = analogRead(A2);
-  valuePT1000 -= 100;
+ // valuePT1000 -= 100;
   Serial.print("  valuePT1000 = ");
   Serial.print(valuePT1000);
 
@@ -267,7 +270,8 @@ long getFlowData() {
     // Enable the interrupt again now that we've finished sending output
     attachInterrupt(flowSensorInterrupt, flowSensorPulseCounter, FALLING);
 
-   return flowSensorTotalMilliLitres;
+  // return flowSensorTotalMilliLitres;
+   return flowSensorRate;
   }
 }
 
