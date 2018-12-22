@@ -3,14 +3,13 @@
                                 Copyright © 2018, Zigfred & Nik.S
     05.12.2018 v0.1
     06.12.2018 v0.2 add DS18B20
-    06.12.2018 v0.3 
+    06.12.2018 v0.3 dell PT1000
 \*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*/
 /*******************************************************************\
     Сервер tt-server ArduinoJson выдает данные: 
         аналоговые: 
             датчик давления
             датчик температуры PT100
-            датчик температуры PT1000
         цифровые: 
             датчик скорости потока воды YF-B5
             датчики температуры DS18B20
@@ -26,13 +25,12 @@ byte mac[] = {0xDE, 0xAD, 0xBE, 0xEF, 0xFF, 0xED};
 EthernetServer server(40246);
 
 // YF-B5 - flow sensor
-// PT100
-// PT1000
+// PT100 - temperature sensors
 // pressure sensor
 // DS18D20 - array of temperature sensors
 
 #define ONE_WIRE_BUS 9
-#define TEMPERATURE_PRECISION 9
+#define TEMPERATURE_PRECISION 11
 OneWire oneWire(ONE_WIRE_BUS);
 DallasTemperature sensorsDS(&oneWire);
 DeviceAddress insideThermometer, outsideThermometer;
@@ -53,8 +51,7 @@ void setup() {
   while (!Serial) continue;
 
   pinMode( A1, INPUT );
-  pinMode( A2, INPUT );
-
+  
   pinMode(flowSensorPin, INPUT);
   digitalWrite(flowSensorPin, HIGH);
   attachInterrupt(flowSensorInterrupt, flowSensorPulseCounter, FALLING);
@@ -111,14 +108,14 @@ void httpResponse() {
   JsonObject& root = jsonBuffer.createObject();
   
   root["TTKotel"] =" v0.3 ";
-  root["pressure"] = getPressureData();
-  root["tempSmoke"] = getPT100Data();
-  root["tempTTOut"] = getPT1000Data();
-  root["L/min"] = getFlowData();
-//  root["litersTotal"] = getFlowData();
-  root["tempTTinIndx"] = sensorsDS.getTempCByIndex(0);
-  root["tempInverseIndx"] = sensorsDS.getTempCByIndex(1);
-
+  root["pressure"] = getPressureData(); //  давление у насоса ТТ
+  root["tempSmoke"] = getPT100Data(); //  температура выходящих газов
+  root["L/min"] = getFlowData();  //  скорость потока воды в контуре ТТ
+//  root["litersTotal"] = getFlowData();  //  объем прокачанной воды в ТТ
+  root["tempInverseIndx"] = sensorsDS.getTempCByIndex(0);  //  темп-ра обратной воды
+  root["tempTTinIndx"] = sensorsDS.getTempCByIndex(1);  //  темп-ра на входе ТТ
+  root["tempTToutIndx"] = sensorsDS.getTempCByIndex(2);  //  темп-ра на выходе ТТ
+ 
   Serial.print(F("Sending: "));
   root.printTo(Serial);
   Serial.println();
@@ -185,39 +182,6 @@ float getPT100Data() {
   Serial.println(tempPT100);
 
   return tempPT100;
-}
-
-/*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*\
-            function to measurement temperature PT1000  
-\*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*/
-float getPT1000Data() {
-
- float koefB = 0.3850; // B-коэффициент
-  int nominalR = 1505; // сопротивление дополнительного резистора
-  int data0PT1000 = 1000; // сопротивления PT1000 при 0 градусах
-
-  int valuePT1000 = analogRead(A2);
- // valuePT1000 -= 100;
-  Serial.print("  valuePT1000 = ");
-  Serial.print(valuePT1000);
-
-//   Rpt=(float)( A1 * R / (1024 - A1 ));
-  float resistancePT1000 = 1023 - valuePT1000; 
-  resistancePT1000 = (float)(1.0 / resistancePT1000);
- // resistancePT1000 /= (float)(resistancePT1000);
-  resistancePT1000 *= valuePT1000;
-  resistancePT1000 *= nominalR;
-  Serial.print("  resistancePT1000 = ");
-  Serial.print(resistancePT1000);
-
-  //tempCpt = ((Rpt-1000) / 0.385 );
-  float tempPT1000 = resistancePT1000;
-  tempPT1000 -= data0PT1000;
-  tempPT1000 /= koefB;
-  Serial.print("   tempPT1000 = ");
-  Serial.println(tempPT1000);
-
-  return tempPT1000;
 }
 
 /*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*\

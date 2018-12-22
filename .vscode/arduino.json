@@ -2,5 +2,6 @@
     "board": "arduino:avr:pro",
     "sketch": "tt-server.ino",
     "configuration": "cpu=16MHzatmega328",
-    "port": "COM3"
+    "port": "COM3",
+    "programmer": "ArduinoISP.org"
 }
