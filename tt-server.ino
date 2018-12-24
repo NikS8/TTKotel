@@ -3,7 +3,9 @@
                                 Copyright © 2018, Zigfred & Nik.S
     05.12.2018 v0.1
     06.12.2018 v0.2 add DS18B20
-    06.12.2018 v0.3 dell PT1000
+    20.12.2018 v0.3 dell PT1000
+    23.12.2018 v0.4 PT100 nominalR = 212 om
+    повышение розрядности измерения PT100
 \*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*/
 /*******************************************************************\
     Сервер tt-server ArduinoJson выдает данные: 
@@ -43,6 +45,16 @@ float flowSensorRate = 0;
 unsigned int flowSensorMilliLitres = 0;
 unsigned long flowSensorTotalMilliLitres = 0;
 unsigned long flowSensorOldTime = 0;
+
+#define PT100_1_PIN A0
+#define PT100_2_PIN A1
+#define PT100_1_CALIBRATION 165
+#define PT100_2_CALIBRATION 975
+#define koefB 2.6           // B-коэффициент 0.385 (1/0.385=2.6)
+#define data0PT100 100      // сопротивления PT100 при 0 градусах
+#define data25PT100 109.73  // сопротивления PT100 при 25 градусах
+uint16_t temp;
+
 /*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*\
             setup
 \*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*/
@@ -99,7 +111,7 @@ void httpResponse() {
   while (client.available()) client.read();
 
   sensorsDS.requestTemperatures();    // Command to get temperatures
-
+  
   // Allocate JsonBuffer
   // Use arduinojson.org/assistant to compute the capacity.
   StaticJsonBuffer<300> jsonBuffer;
@@ -107,14 +119,15 @@ void httpResponse() {
   // Create the root object
   JsonObject& root = jsonBuffer.createObject();
   
-  root["TTKotel"] =" v0.3 ";
+  root["TTKotel"] =" v0.4 ";
   root["pressure"] = getPressureData(); //  давление у насоса ТТ
-  root["tempSmoke"] = getPT100Data(); //  температура выходящих газов
+  root["tempSmoke"] = getPT100Data(PT100_1_PIN, PT100_1_CALIBRATION); //  температура выходящих газов
+  root["temp"] = getPT100Data(PT100_2_PIN, PT100_2_CALIBRATION); //  температура выходящих газов
   root["L/min"] = getFlowData();  //  скорость потока воды в контуре ТТ
 //  root["litersTotal"] = getFlowData();  //  объем прокачанной воды в ТТ
-  root["tempInverseIndx"] = sensorsDS.getTempCByIndex(0);  //  темп-ра обратной воды
-  root["tempTTinIndx"] = sensorsDS.getTempCByIndex(1);  //  темп-ра на входе ТТ
-  root["tempTToutIndx"] = sensorsDS.getTempCByIndex(2);  //  темп-ра на выходе ТТ
+  root["tempTToutIndx"] = sensorsDS.getTempCByIndex(1);  //  темп-ра на выходе ТТ
+  root["tempTTinIndx"] = sensorsDS.getTempCByIndex(0);  //  темп-ра на входе ТТ
+  root["tempInverseIndx"] = sensorsDS.getTempCByIndex(2);  //  темп-ра обратной воды
  
   Serial.print(F("Sending: "));
   root.printTo(Serial);
@@ -137,8 +150,12 @@ void httpResponse() {
             function to measurement pressure
 \*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*/
 float getPressureData() {
-  int aA0 = analogRead(A0);
-  
+
+  unsigned int avg_sum=0;
+  for(byte i=0; i<8; i++){
+  avg_sum += analogRead(A0);
+  }
+  float aA0 = avg_sum / 8;
   Serial.print(" aA0");
   Serial.println(aA0);
  
@@ -155,29 +172,28 @@ float getPressureData() {
 /*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*\
             function to measurement temperature PT100
 \*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*/
-float getPT100Data() {
+int getPT100Data (int analogPin, int nominalR) {
 
-  float koefB = 0.3850; // B-коэффициент
-  int nominalR = 1025; // сопротивление дополнительного резистора
-  int data0PT100 = 100; // сопротивления PT100 при 0 градусах
+ // float koefB = 2.6; // B-коэффициент 0.385 (1/0.385=2.6)
+ // int nominalR = 212; // сопротивление дополнительного резистора
+ // int data0PT100 = 100; // сопротивления PT100 при 0 градусах
 
-  int valuePT100 = analogRead(A1);
-  Serial.print("  valuePT100 = ");
-  Serial.print(valuePT100);
+  unsigned int avg_sum=0;
+  for(byte i=0;i<8;i++){
+  avg_sum+=analogRead(analogPin);
+  }
+  float valuePT100 = avg_sum / 8;
+//  Serial.print("  valuePT100 = ");
+//  Serial.print(valuePT100);
 
-//   Rpt=(float)( A1 * R / (1023 - A1 ));
-  float resistancePT100 = 1023 - valuePT100; 
-  resistancePT100 = (float)(1.0 / resistancePT100);
- // resistancePT100 /= (float)(resistancePT100);
-  resistancePT100 *= valuePT100;
-  resistancePT100 *= nominalR;
-  Serial.print("  resistancePT100 = ");
-  Serial.print(resistancePT100);
+ float resistancePT100 = 1023.0 / valuePT100 - 1;
+  resistancePT100 = nominalR / resistancePT100;
+//  Serial.print("  resistancePT100 = ");
+//  Serial.print(resistancePT100);
 
-  //tempCpt = ((Rpt-100) / 0.385 );
-  float tempPT100 = resistancePT100;
-  tempPT100 -= data0PT100;
-  tempPT100 /= koefB;
+  float temp = log(resistancePT100 - data0PT100) + resistancePT100; 
+  temp -= data0PT100;
+  int tempPT100 = temp * koefB; // *B
   Serial.print("   tempPT100 = ");
   Serial.println(tempPT100);
 
@@ -199,7 +215,11 @@ long getFlowData() {
     // based on the number of pulses per second per units of measure (litres/minute in
     // this case) coming from the sensor.
     flowSensorRate = ((1000.0 / (millis() - flowSensorOldTime)) * flowSensorPulseCount) / flowSensorCalibrationFactor;
-    
+  /*    flowSensorRate = millis() - flowSensorOldTime;
+      flowSensorRate = 1000.0 / flowSensorRate;
+      flowSensorRate *= flowSensorPulseCount;
+      flowSensorRate /= flowSensorCalibrationFactor;
+  */  
     // Note the time this processing pass was executed. Note that because we've
     // disabled interrupts the millis() function won't actually be incrementing right
     // at this point, but it will still return the value it was set to just before
