@@ -1,12 +1,13 @@
 /*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*\
                                                     tt-server.ino 
                                 Copyright © 2018, Zigfred & Nik.S
-    05.12.2018 v0.1
-    06.12.2018 v0.2 add DS18B20
-    20.12.2018 v0.3 dell PT1000
-    23.12.2018 v0.4 PT100 nominalR = 212 om
-    24.12.2018 v0.5 flow sensor calc switch to pulses per second
-    24.12.2018 v0.6 повышение розрядности измерения PT100 и датчика давления
+    05.12.2018 1
+    06.12.2018 2 add DS18B20
+    20.12.2018 3 dell PT1000
+    23.12.2018 4 PT100 nominalR = 212 om
+    24.12.2018 5 flow sensor calc switch to pulses per second
+    24.12.2018 6 повышение розрядности измерения PT100 и датчика давления
+    24.12.2018 7 json structure updated
 \*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*/
 /*******************************************************************\
     Сервер tt-server ArduinoJson выдает данные: 
@@ -23,6 +24,9 @@
 #include <SPI.h>
 #include <OneWire.h>
 #include <DallasTemperature.h>
+
+#define DEVICE_ID "boilerWood"
+#define VERSION 7
 
 byte mac[] = {0xDE, 0xAD, 0xBE, 0xEF, 0xFF, 0xED};
 EthernetServer server(40246);
@@ -116,7 +120,8 @@ void httpResponse() {
   // Create the root object
   JsonObject& root = jsonBuffer.createObject();
 
-  root["TTKotel"] ="v0.6";
+  root["deviceId"] = DEVICE_ID;
+  root["version"] = VERSION;
   root["pressure"] = getPressureData(); //  давление у насоса ТТ
   root["tempSmoke"] = getPT100Data(PT100_1_PIN, PT100_1_CALIBRATION); //  температура выходящих газов
   root["temp"] = getPT100Data(PT100_2_PIN, PT100_2_CALIBRATION); //  температура выходящих газов
