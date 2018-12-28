@@ -5,7 +5,8 @@
     06.12.2018 v0.2 add DS18B20
     20.12.2018 v0.3 dell PT1000
     23.12.2018 v0.4 PT100 nominalR = 212 om
-    повышение розрядности измерения PT100
+    24.12.2018 v0.5 flow sensor calc switch to pulses per second
+    24.12.2018 v0.6 повышение розрядности измерения PT100 и датчика давления
 \*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*/
 /*******************************************************************\
     Сервер tt-server ArduinoJson выдает данные: 
@@ -42,10 +43,10 @@ byte flowSensorPin       = 2;
 long flowSensorLastTime = 0;
 volatile byte flowSensorPulseCount = 0;
 
-#define PT100_1_PIN A0
-#define PT100_2_PIN A1
+#define PT100_1_PIN A1
+#define PT100_2_PIN A2
 #define PT100_1_CALIBRATION 165
-#define PT100_2_CALIBRATION 975
+#define PT100_2_CALIBRATION 1005
 #define koefB 2.6           // B-коэффициент 0.385 (1/0.385=2.6)
 #define data0PT100 100      // сопротивления PT100 при 0 градусах
 #define data25PT100 109.73  // сопротивления PT100 при 25 градусах
@@ -114,8 +115,8 @@ void httpResponse() {
 
   // Create the root object
   JsonObject& root = jsonBuffer.createObject();
-  
-  root["TTKotel"] ="v0.5";
+
+  root["TTKotel"] ="v0.6";
   root["pressure"] = getPressureData(); //  давление у насоса ТТ
   root["tempSmoke"] = getPT100Data(PT100_1_PIN, PT100_1_CALIBRATION); //  температура выходящих газов
   root["temp"] = getPT100Data(PT100_2_PIN, PT100_2_CALIBRATION); //  температура выходящих газов
