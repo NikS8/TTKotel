@@ -39,12 +39,8 @@ DeviceAddress insideThermometer, outsideThermometer;
 
 byte flowSensorInterrupt = 0;  // 0 = digital pin 2
 byte flowSensorPin       = 2;
-float flowSensorCalibrationFactor = 6.6;
-volatile byte flowSensorPulseCount = 0;  
-float flowSensorRate = 0;
-unsigned int flowSensorMilliLitres = 0;
-unsigned long flowSensorTotalMilliLitres = 0;
-unsigned long flowSensorOldTime = 0;
+long flowSensorLastTime = 0;
+volatile byte flowSensorPulseCount = 0;
 
 #define PT100_1_PIN A0
 #define PT100_2_PIN A1
@@ -119,12 +115,11 @@ void httpResponse() {
   // Create the root object
   JsonObject& root = jsonBuffer.createObject();
   
-  root["TTKotel"] =" v0.4 ";
+  root["TTKotel"] ="v0.5";
   root["pressure"] = getPressureData(); //  давление у насоса ТТ
   root["tempSmoke"] = getPT100Data(PT100_1_PIN, PT100_1_CALIBRATION); //  температура выходящих газов
   root["temp"] = getPT100Data(PT100_2_PIN, PT100_2_CALIBRATION); //  температура выходящих газов
   root["L/min"] = getFlowData();  //  скорость потока воды в контуре ТТ
-//  root["litersTotal"] = getFlowData();  //  объем прокачанной воды в ТТ
   root["tempTToutIndx"] = sensorsDS.getTempCByIndex(1);  //  темп-ра на выходе ТТ
   root["tempTTinIndx"] = sensorsDS.getTempCByIndex(0);  //  темп-ра на входе ТТ
   root["tempInverseIndx"] = sensorsDS.getTempCByIndex(2);  //  темп-ра обратной воды
@@ -203,62 +198,20 @@ int getPT100Data (int analogPin, int nominalR) {
 /*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*\
             function to measurement flow water
 \*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*/
-long getFlowData() {
- if((millis() - flowSensorOldTime) > 1000)    // Only process counters once per second
-  {
-  
-    detachInterrupt(flowSensorInterrupt);
-        
-    // Because this loop may not complete in exactly 1 second intervals we calculate
-    // the number of milliseconds that have passed since the last execution and use
-    // that to scale the output. We also apply the calibrationFactor to scale the output
-    // based on the number of pulses per second per units of measure (litres/minute in
-    // this case) coming from the sensor.
-    flowSensorRate = ((1000.0 / (millis() - flowSensorOldTime)) * flowSensorPulseCount) / flowSensorCalibrationFactor;
-  /*    flowSensorRate = millis() - flowSensorOldTime;
-      flowSensorRate = 1000.0 / flowSensorRate;
-      flowSensorRate *= flowSensorPulseCount;
-      flowSensorRate /= flowSensorCalibrationFactor;
-  */  
-    // Note the time this processing pass was executed. Note that because we've
-    // disabled interrupts the millis() function won't actually be incrementing right
-    // at this point, but it will still return the value it was set to just before
-    // interrupts went away.
-    flowSensorOldTime = millis();
-    
-    // Divide the flow rate in litres/minute by 60 to determine how many litres have
-    // passed through the sensor in this 1 second interval, then multiply by 1000 to
-    // convert to millilitres.
-    flowSensorMilliLitres = (flowSensorRate / 60) * 1000;
-    
-    // Add the millilitres passed in this second to the cumulative total
-    flowSensorTotalMilliLitres += flowSensorMilliLitres;
-    
-    // Print the flow rate for this second in litres / minute
-    Serial.print("Flow rate: ");
-    Serial.print(int(flowSensorRate));  // Print the integer part of the variable
-    Serial.print("L/min");
-    Serial.print("\t");       // Print tab space
 
-    // Print the cumulative total of litres flowed since starting
-    Serial.print("Output Liquid Quantity: ");        
-    Serial.print(flowSensorTotalMilliLitres);
-    Serial.println("mL"); 
-    Serial.print("\t");       // Print tab space
-    Serial.print(flowSensorTotalMilliLitres/1000);
-    Serial.print("L");
+int getFlowData() {
+  static int flowSensorPulsesPerSecond;
 
-    // Reset the pulse counter so we can start incrementing again
-    flowSensorPulseCount = 0;
-    
-    // Enable the interrupt again now that we've finished sending output
-    attachInterrupt(flowSensorInterrupt, flowSensorPulseCounter, FALLING);
-
-  // return flowSensorTotalMilliLitres;
-   return flowSensorRate;
+  if (flowSensorLastTime + 5000 > millis()) { // just return previous value if last measure was less than 5sec ago
+    return flowSensorPulsesPerSecond;
   }
-}
 
+  flowSensorPulsesPerSecond = (millis() - flowSensorLastTime) / 1000 * flowSensorPulseCount;
+  flowSensorLastTime = millis();
+  flowSensorPulseCount = 0;
+
+  return flowSensorPulsesPerSecond;
+}
 /*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*\
             function to counting pulse
 \*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*/
