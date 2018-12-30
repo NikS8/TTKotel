@@ -1,22 +1,23 @@
 /*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*\
                                                     tt-server.ino 
                                 Copyright © 2018, Zigfred & Nik.S
-    05.12.2018 1
-    06.12.2018 2 add DS18B20
-    20.12.2018 3 dell PT1000
-    23.12.2018 4 PT100 nominalR = 212 om
-    24.12.2018 5 flow sensor calc switch to pulses per second
-    24.12.2018 6 повышение розрядности измерения PT100 и датчика давления
-    24.12.2018 7 json structure updated
+05.12.2018 1
+06.12.2018 2 add DS18B20
+20.12.2018 3 dell PT1000
+23.12.2018 4 PT100 nominalR = 220 om и 1 ком
+24.12.2018 5 flow sensor calc switch to pulses per second
+24.12.2018 6 повышение розрядности измерения PT100 и датчика давления
+24.12.2018 7 json structure updated
+30.12.2018 8 в json замена на ds18In, ds18Out, ds18FromTA
 \*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*/
 /*******************************************************************\
-    Сервер tt-server ArduinoJson выдает данные: 
-        аналоговые: 
-            датчик давления
-            датчик температуры PT100
-        цифровые: 
-            датчик скорости потока воды YF-B5
-            датчики температуры DS18B20
+Сервер tt-server ArduinoJson выдает данные: 
+  аналоговые: 
+    датчик давления
+    датчик температуры PT100
+  цифровые: 
+    датчик скорости потока воды YF-B5
+    датчики температуры DS18B20
 /*******************************************************************/
 
 #include <ArduinoJson.h>
@@ -123,12 +124,12 @@ void httpResponse() {
   root["deviceId"] = DEVICE_ID;
   root["version"] = VERSION;
   root["pressure"] = getPressureData(); //  давление у насоса ТТ
-  root["tempSmoke"] = getPT100Data(PT100_1_PIN, PT100_1_CALIBRATION); //  температура выходящих газов
-  root["temp"] = getPT100Data(PT100_2_PIN, PT100_2_CALIBRATION); //  температура выходящих газов
+  root["tempSmoke"] = getPT100Data(PT100_1_PIN, PT100_1_CALIBRATION); //  темп-ра выходящих газов
+  root["temp"] = getPT100Data(PT100_2_PIN, PT100_2_CALIBRATION); //  темп-ра дымохода
   root["L/min"] = getFlowData();  //  скорость потока воды в контуре ТТ
-  root["tempTToutIndx"] = sensorsDS.getTempCByIndex(1);  //  темп-ра на выходе ТТ
-  root["tempTTinIndx"] = sensorsDS.getTempCByIndex(0);  //  темп-ра на входе ТТ
-  root["tempInverseIndx"] = sensorsDS.getTempCByIndex(2);  //  темп-ра обратной воды
+  root["ds18Out"] = sensorsDS.getTempCByIndex(1);  //  темп-ра на выходе ТТ
+  root["ds18In"] = sensorsDS.getTempCByIndex(0);  //  темп-ра на входе ТТ
+  root["ds18FromTA"] = sensorsDS.getTempCByIndex(2);  //  темп-ра воды от ТА
  
   Serial.print(F("Sending: "));
   root.printTo(Serial);
@@ -210,9 +211,10 @@ int getFlowData() {
 
   if (flowSensorLastTime + 5000 > millis()) { // just return previous value if last measure was less than 5sec ago
     return flowSensorPulsesPerSecond;
+    flowSensorPulsesPerSecond = (millis() - flowSensorLastTime) / 1000 * flowSensorPulseCount;
+
   }
 
-  flowSensorPulsesPerSecond = (millis() - flowSensorLastTime) / 1000 * flowSensorPulseCount;
   flowSensorLastTime = millis();
   flowSensorPulseCount = 0;
 
