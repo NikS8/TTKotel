@@ -9,6 +9,7 @@
 24.12.2018 6 повышение розрядности измерения PT100 и датчика давления
 24.12.2018 7 json structure updated
 30.12.2018 8 в json замена на ds18In, ds18Out, ds18FromTA
+09.01.2019 9 static int flowSensorPulsesPerSecond на unsigned long
 \*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*/
 /*******************************************************************\
 Сервер tt-server ArduinoJson выдает данные: 
@@ -27,7 +28,7 @@
 #include <DallasTemperature.h>
 
 #define DEVICE_ID "boilerWood"
-#define VERSION 7
+#define VERSION 9
 
 byte mac[] = {0xDE, 0xAD, 0xBE, 0xEF, 0xFF, 0xED};
 EthernetServer server(40246);
@@ -45,17 +46,19 @@ DeviceAddress insideThermometer, outsideThermometer;
 
 byte flowSensorInterrupt = 0;  // 0 = digital pin 2
 byte flowSensorPin       = 2;
-long flowSensorLastTime = 0;
-volatile byte flowSensorPulseCount = 0;
+unsigned long flowSensorLastTime = 0;
+volatile long flowSensorPulseCount = 0;
 
 #define PT100_1_PIN A1
 #define PT100_2_PIN A2
-#define PT100_1_CALIBRATION 165
-#define PT100_2_CALIBRATION 1005
+//#define PT100_1_CALIBRATION 165
+//#define PT100_2_CALIBRATION 1005
+#define PT100_1_CALIBRATION 190
+#define PT100_2_CALIBRATION 980
 #define koefB 2.6           // B-коэффициент 0.385 (1/0.385=2.6)
 #define data0PT100 100      // сопротивления PT100 при 0 градусах
 #define data25PT100 109.73  // сопротивления PT100 при 25 градусах
-uint16_t temp;
+    uint16_t temp;
 
 /*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*\
             setup
@@ -87,7 +90,7 @@ void setup() {
             loop
 \*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*/
 void loop() {
-
+  getFlowData();
   httpResponse();
 }
 
@@ -123,14 +126,14 @@ void httpResponse() {
 
   root["deviceId"] = DEVICE_ID;
   root["version"] = VERSION;
-  root["pressure"] = getPressureData(); //  давление у насоса ТТ
+  root["pressure"] = String(getPressureData(),2); //  давление у насоса ТТ
   root["tempSmoke"] = getPT100Data(PT100_1_PIN, PT100_1_CALIBRATION); //  темп-ра выходящих газов
   root["temp"] = getPT100Data(PT100_2_PIN, PT100_2_CALIBRATION); //  темп-ра дымохода
   root["L/min"] = getFlowData();  //  скорость потока воды в контуре ТТ
-  root["ds18Out"] = sensorsDS.getTempCByIndex(1);  //  темп-ра на выходе ТТ
-  root["ds18In"] = sensorsDS.getTempCByIndex(0);  //  темп-ра на входе ТТ
-  root["ds18FromTA"] = sensorsDS.getTempCByIndex(2);  //  темп-ра воды от ТА
- 
+  root["ds18Out"] = String(sensorsDS.getTempCByIndex(1),2);  //  темп-ра на выходе ТТ
+  root["ds18In"] = String(sensorsDS.getTempCByIndex(0),1);  //  темп-ра на входе ТТ
+  root["ds18FromTA"] = String(sensorsDS.getTempCByIndex(2),1);  //  темп-ра воды от ТА
+
   Serial.print(F("Sending: "));
   root.printTo(Serial);
   Serial.println();
@@ -176,9 +179,10 @@ float getPressureData() {
 \*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*/
 int getPT100Data (int analogPin, int nominalR) {
 
- // float koefB = 2.6; // B-коэффициент 0.385 (1/0.385=2.6)
- // int nominalR = 212; // сопротивление дополнительного резистора
- // int data0PT100 = 100; // сопротивления PT100 при 0 градусах
+  // float koefB = 2.6; // B-коэффициент 0.385 (1/0.385=2.6)
+  // int nominalR = 212; // сопротивление дополнительного резистора
+  // int data0PT100 = 100; // сопротивления PT100 при 0 градусах
+  //Формула R = nominalR * analogRead(Pin) / (1023 - analogRead(Pin))
 
   unsigned int avg_sum=0;
   for(byte i=0;i<8;i++){
@@ -188,12 +192,14 @@ int getPT100Data (int analogPin, int nominalR) {
 //  Serial.print("  valuePT100 = ");
 //  Serial.print(valuePT100);
 
- float resistancePT100 = 1023.0 / valuePT100 - 1;
+  float resistancePT100 = 1023.0 - valuePT100;
   resistancePT100 = nominalR / resistancePT100;
-//  Serial.print("  resistancePT100 = ");
-//  Serial.print(resistancePT100);
+  resistancePT100 *= valuePT100;
+      //  Serial.print("  resistancePT100 = ");
+      //  Serial.print(resistancePT100);
 
-  float temp = log(resistancePT100 - data0PT100) + resistancePT100; 
+ //     float temp = log(resistancePT100 - data0PT100) + resistancePT100;
+  float temp = resistancePT100;
   temp -= data0PT100;
   int tempPT100 = temp * koefB; // *B
   Serial.print("   tempPT100 = ");
@@ -207,17 +213,26 @@ int getPT100Data (int analogPin, int nominalR) {
 \*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*/
 
 int getFlowData() {
-  static int flowSensorPulsesPerSecond;
+//  static int flowSensorPulsesPerSecond;
+unsigned long flowSensorPulsesPerSecond;
 
-  if (flowSensorLastTime + 5000 > millis()) { // just return previous value if last measure was less than 5sec ago
-    return flowSensorPulsesPerSecond;
-    flowSensorPulsesPerSecond = (millis() - flowSensorLastTime) / 1000 * flowSensorPulseCount;
-
-  }
+unsigned long deltaTime = millis() - flowSensorLastTime;
+//  if ((millis() - flowSensorLastTime) < 1000) {
+if (deltaTime < 1000) {
+  return ;
+} 
+ 
+ detachInterrupt(flowSensorInterrupt);
+  //     flowSensorPulsesPerSecond = (1000 * flowSensorPulseCount / (millis() - flowSensorLastTime));
+  //    flowSensorPulsesPerSecond = (flowSensorPulseCount * 1000 / deltaTime);
+  flowSensorPulsesPerSecond = flowSensorPulseCount;
+  flowSensorPulsesPerSecond *= 1000;
+  flowSensorPulsesPerSecond /= deltaTime;  //  количество за секунду
 
   flowSensorLastTime = millis();
   flowSensorPulseCount = 0;
-
+  attachInterrupt(flowSensorInterrupt, flowSensorPulseCounter, FALLING);
+  
   return flowSensorPulsesPerSecond;
 }
 /*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*\
