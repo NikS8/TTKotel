@@ -1,6 +1,6 @@
 /*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*\
                                                     tt-server.ino 
-                                Copyright © 2018, Zigfred & Nik.S
+                              Copyright © 2018-2019, Zigfred & Nik.S
 05.12.2018 1
 06.12.2018 2 add DS18B20
 20.12.2018 3 dell PT1000
@@ -10,6 +10,7 @@
 24.12.2018 7 json structure updated
 30.12.2018 8 в json замена на ds18In, ds18Out, ds18FromTA
 09.01.2019 9 static int flowSensorPulsesPerSecond на unsigned long
+04.02.2019 v10 добавлена функция freeRam()
 \*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*/
 /*******************************************************************\
 Сервер tt-server ArduinoJson выдает данные: 
@@ -28,7 +29,7 @@
 #include <DallasTemperature.h>
 
 #define DEVICE_ID "boilerWood"
-#define VERSION 9
+#define VERSION 10
 
 byte mac[] = {0xDE, 0xAD, 0xBE, 0xEF, 0xFF, 0xED};
 EthernetServer server(40246);
@@ -53,7 +54,7 @@ volatile long flowSensorPulseCount = 0;
 #define PT100_2_PIN A2
 //#define PT100_1_CALIBRATION 165
 //#define PT100_2_CALIBRATION 1005
-#define PT100_1_CALIBRATION 190
+#define PT100_1_CALIBRATION 130
 #define PT100_2_CALIBRATION 980
 #define koefB 2.6           // B-коэффициент 0.385 (1/0.385=2.6)
 #define data0PT100 100      // сопротивления PT100 при 0 градусах
@@ -70,7 +71,7 @@ void setup() {
   pinMode( A1, INPUT );
   
   pinMode(flowSensorPin, INPUT);
-  digitalWrite(flowSensorPin, HIGH);
+  //digitalWrite(flowSensorPin, HIGH);
   attachInterrupt(flowSensorInterrupt, flowSensorPulseCounter, FALLING);
   
   if (!Ethernet.begin(mac)) {
@@ -126,6 +127,7 @@ void httpResponse() {
 
   root["deviceId"] = DEVICE_ID;
   root["version"] = VERSION;
+  root["freeRam "] = freeRam();
   root["pressure"] = String(getPressureData(),2); //  давление у насоса ТТ
   root["tempSmoke"] = getPT100Data(PT100_1_PIN, PT100_1_CALIBRATION); //  темп-ра выходящих газов
   root["temp"] = getPT100Data(PT100_2_PIN, PT100_2_CALIBRATION); //  темп-ра дымохода
@@ -243,6 +245,15 @@ void flowSensorPulseCounter() {
   flowSensorPulseCount++;
 }
 
+/*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*\
+            Количество свободной памяти
+\*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*/
+int freeRam()
+{
+  extern int __heap_start, *__brkval;
+  int v;
+  return (int)&v - (__brkval == 0 ? (int)&__heap_start : (int)__brkval);
+}
 /*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*\
             end
 \*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*/
