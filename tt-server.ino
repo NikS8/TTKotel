@@ -11,6 +11,7 @@
 30.12.2018 8 в json замена на ds18In, ds18Out, ds18FromTA
 09.01.2019 9 static int flowSensorPulsesPerSecond на unsigned long
 04.02.2019 v10 добавлена функция freeRam()
+06.02.2019 v11 добавлен префикс к переменным "boiler-wood-"
 \*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*/
 /*******************************************************************\
 Сервер tt-server ArduinoJson выдает данные: 
@@ -28,8 +29,8 @@
 #include <OneWire.h>
 #include <DallasTemperature.h>
 
-#define DEVICE_ID "boilerWood"
-#define VERSION 10
+#define DEVICE_ID "boiler-wood"
+#define VERSION 11
 
 byte mac[] = {0xDE, 0xAD, 0xBE, 0xEF, 0xFF, 0xED};
 EthernetServer server(40246);
@@ -45,8 +46,8 @@ OneWire oneWire(ONE_WIRE_BUS);
 DallasTemperature sensorsDS(&oneWire);
 DeviceAddress insideThermometer, outsideThermometer;
 
-byte flowSensorInterrupt = 0;  // 0 = digital pin 2
-byte flowSensorPin       = 2;
+#define PIN_FLOW_SENSOR 2
+#define PIN_INTERRUPT_FLOW_SENSOR 0
 unsigned long flowSensorLastTime = 0;
 volatile long flowSensorPulseCount = 0;
 
@@ -54,8 +55,8 @@ volatile long flowSensorPulseCount = 0;
 #define PT100_2_PIN A2
 //#define PT100_1_CALIBRATION 165
 //#define PT100_2_CALIBRATION 1005
-#define PT100_1_CALIBRATION 130
-#define PT100_2_CALIBRATION 980
+#define PT100_1_CALIBRATION 125
+#define PT100_2_CALIBRATION 995
 #define koefB 2.6           // B-коэффициент 0.385 (1/0.385=2.6)
 #define data0PT100 100      // сопротивления PT100 при 0 градусах
 #define data25PT100 109.73  // сопротивления PT100 при 25 градусах
@@ -69,11 +70,12 @@ void setup() {
   while (!Serial) continue;
 
   pinMode( A1, INPUT );
-  
-  pinMode(flowSensorPin, INPUT);
-  //digitalWrite(flowSensorPin, HIGH);
-  attachInterrupt(flowSensorInterrupt, flowSensorPulseCounter, FALLING);
-  
+
+  pinMode(PIN_FLOW_SENSOR, INPUT);
+  //digitalWrite(PIN_FLOW_SENSOR, HIGH);
+  attachInterrupt(PIN_INTERRUPT_FLOW_SENSOR, flowSensorPulseCounter, FALLING);
+  sei();
+
   if (!Ethernet.begin(mac)) {
     Serial.println(F("Failed to initialize Ethernet library"));
     return;
@@ -127,15 +129,16 @@ void httpResponse() {
 
   root["deviceId"] = DEVICE_ID;
   root["version"] = VERSION;
-  root["freeRam "] = freeRam();
-  root["pressure"] = String(getPressureData(),2); //  давление у насоса ТТ
-  root["tempSmoke"] = getPT100Data(PT100_1_PIN, PT100_1_CALIBRATION); //  темп-ра выходящих газов
-  root["temp"] = getPT100Data(PT100_2_PIN, PT100_2_CALIBRATION); //  темп-ра дымохода
-  root["L/min"] = getFlowData();  //  скорость потока воды в контуре ТТ
+  
+  root["boiler-wood-pressure"] = String(getPressureData(), 2);        //  давление у насоса ТТ
+  root["boiler-wood-tempSmoke"] = getPT100Data(PT100_1_PIN, PT100_1_CALIBRATION); //  темп-ра выходящих газов
+  root["boiler-wood-temp"] = getPT100Data(PT100_2_PIN, PT100_2_CALIBRATION);      //  темп-ра дымохода
+  root["boiler-wood-flow"] = getFlowData();                                      //  скорость потока воды в контуре ТТ
   root["ds18Out"] = String(sensorsDS.getTempCByIndex(1),2);  //  темп-ра на выходе ТТ
   root["ds18In"] = String(sensorsDS.getTempCByIndex(0),1);  //  темп-ра на входе ТТ
   root["ds18FromTA"] = String(sensorsDS.getTempCByIndex(2),1);  //  темп-ра воды от ТА
 
+  root["freeRam "] = freeRam();
   Serial.print(F("Sending: "));
   root.printTo(Serial);
   Serial.println();
@@ -215,32 +218,36 @@ int getPT100Data (int analogPin, int nominalR) {
 \*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*/
 
 int getFlowData() {
-//  static int flowSensorPulsesPerSecond;
-unsigned long flowSensorPulsesPerSecond;
+  //  static int flowSensorPulsesPerSecond;
+  unsigned long flowSensorPulsesPerSecond;
 
-unsigned long deltaTime = millis() - flowSensorLastTime;
-//  if ((millis() - flowSensorLastTime) < 1000) {
-if (deltaTime < 1000) {
-  return ;
-} 
- 
- detachInterrupt(flowSensorInterrupt);
+  unsigned long deltaTime = millis() - flowSensorLastTime;
+  //  if ((millis() - flowSensorLastTime) < 1000) {
+  if (deltaTime < 1000)
+  {
+    return;
+  }
+
+  //detachInterrupt(flowSensorInterrupt);
+  detachInterrupt(PIN_INTERRUPT_FLOW_SENSOR);
   //     flowSensorPulsesPerSecond = (1000 * flowSensorPulseCount / (millis() - flowSensorLastTime));
   //    flowSensorPulsesPerSecond = (flowSensorPulseCount * 1000 / deltaTime);
   flowSensorPulsesPerSecond = flowSensorPulseCount;
   flowSensorPulsesPerSecond *= 1000;
-  flowSensorPulsesPerSecond /= deltaTime;  //  количество за секунду
+  flowSensorPulsesPerSecond /= deltaTime; //  количество за секунду
 
   flowSensorLastTime = millis();
   flowSensorPulseCount = 0;
-  attachInterrupt(flowSensorInterrupt, flowSensorPulseCounter, FALLING);
-  
+  //attachInterrupt(flowSensorInterrupt, flowSensorPulseCounter, FALLING);
+  attachInterrupt(PIN_INTERRUPT_FLOW_SENSOR, flowSensorPulseCounter, FALLING);
+
   return flowSensorPulsesPerSecond;
 }
 /*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*\
             function to counting pulse
 \*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*/
-void flowSensorPulseCounter() {
+void flowSensorPulseCounter()
+{
   // Increment the pulse counter
   flowSensorPulseCount++;
 }
