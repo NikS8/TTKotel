@@ -12,6 +12,7 @@
 09.01.2019 9 static int flowSensorPulsesPerSecond на unsigned long
 04.02.2019 v10 добавлена функция freeRam()
 06.02.2019 v11 добавлен префикс к переменным "boiler-wood-"
+06.02.2019 v12 структура JSON без <ArduinoJson.h>
 \*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*/
 /*******************************************************************\
 Сервер tt-server ArduinoJson выдает данные: 
@@ -23,44 +24,54 @@
     датчики температуры DS18B20
 /*******************************************************************/
 
-#include <ArduinoJson.h>
+//#include <ArduinoJson.h>
 #include <Ethernet2.h>
 #include <SPI.h>
 #include <OneWire.h>
 #include <DallasTemperature.h>
+#include <RBD_Timer.h>
 
 #define DEVICE_ID "boiler-wood"
-#define VERSION 11
+#define VERSION 12
+
+#define RESET_UPTIME_TIME 43200000 //  = 30 * 24 * 60 * 60 * 1000 \
+                                   // reset after 30 days uptime
 
 byte mac[] = {0xDE, 0xAD, 0xBE, 0xEF, 0xFF, 0xED};
-EthernetServer server(40246);
+EthernetServer httpServer(40246);
 
 // YF-B5 - flow sensor
 // PT100 - temperature sensors
 // pressure sensor
 // DS18D20 - array of temperature sensors
 
-#define ONE_WIRE_BUS 9
-#define TEMPERATURE_PRECISION 11
-OneWire oneWire(ONE_WIRE_BUS);
-DallasTemperature sensorsDS(&oneWire);
-DeviceAddress insideThermometer, outsideThermometer;
+#define PIN_ONE_WIRE_BUS 9
+uint8_t ds18Precision = 11;
+#define DS18_CONVERSION_TIME 750 / (1 << (12 - ds18Precision))
+unsigned short ds18DeviceCount;
+bool isDS18ParasitePowerModeOn;
+OneWire ds18wireBus(PIN_ONE_WIRE_BUS);
+DallasTemperature ds18Sensors(&ds18wireBus);
 
 #define PIN_FLOW_SENSOR 2
 #define PIN_INTERRUPT_FLOW_SENSOR 0
-unsigned long flowSensorLastTime = 0;
 volatile long flowSensorPulseCount = 0;
+// time
+unsigned long currentTime;
+unsigned long flowSensorLastTime;
 
 #define PT100_1_PIN A1
 #define PT100_2_PIN A2
 //#define PT100_1_CALIBRATION 165
 //#define PT100_2_CALIBRATION 1005
-#define PT100_1_CALIBRATION 125
-#define PT100_2_CALIBRATION 995
+#define PT100_1_CALIBRATION 128
+#define PT100_2_CALIBRATION 1000
 #define koefB 2.6           // B-коэффициент 0.385 (1/0.385=2.6)
 #define data0PT100 100      // сопротивления PT100 при 0 градусах
 #define data25PT100 109.73  // сопротивления PT100 при 25 градусах
-    uint16_t temp;
+uint16_t temp;
+RBD::Timer ds18ConversionTimer;
+
 
 /*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*\
             setup
@@ -80,21 +91,45 @@ void setup() {
     Serial.println(F("Failed to initialize Ethernet library"));
     return;
   }
-  server.begin();
+  httpServer.begin();
   Serial.println(F("Server is ready."));
   Serial.print(F("Please connect to http://"));
   Serial.println(Ethernet.localIP());
 
 //  initOneWire();
-  sensorsDS.begin();
+  ds18Sensors.begin();
+  ds18DeviceCount = ds18Sensors.getDeviceCount();
+
+  getSettings();
+}
+
+/*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*\
+            Settings
+\*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*/
+void getSettings()
+{
+//  String responseText = doRequest(settingsServiceUri, "");
+  // TODO parse settings and fill values to variables
+  //intervalLogServicePeriod = 10000;
+  //settingsServiceUri
+  //intervalLogServiceUri
+  //ds18Precision
+  ds18Sensors.requestTemperatures();
+  //intervalLogServiceTimer.setTimeout(intervalLogServicePeriod);
+  //intervalLogServiceTimer.restart();
+  ds18ConversionTimer.setTimeout(DS18_CONVERSION_TIME);
+  ds18ConversionTimer.restart();
 }
 
 /*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*\
             loop
 \*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*/
 void loop() {
-  getFlowData();
-  httpResponse();
+  
+  currentTime = millis();
+  resetWhen30Days();
+
+  realTimeService();
 }
 
 
@@ -103,57 +138,162 @@ void loop() {
 \*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*/
 
 /*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*\
-            function to httpResponse()
+            UTILS
 \*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*/
-void httpResponse() {
+void resetWhen30Days()
+{
+  if (millis() > (RESET_UPTIME_TIME))
+  {
+    // do reset
+  }
+}
 
-   // Wait for an incomming connection
-  EthernetClient client = server.available();
+/*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*\
+            realTimeService
+\*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*/
+void realTimeService()
+{
 
-  // Do we have a client?
-  if (!client) return;
+  EthernetClient reqClient = httpServer.available();
+  if (!reqClient)
+    return;
 
-  Serial.println(F("New client"));
+  while (reqClient.available())
+    reqClient.read();
+  ds18RequestTemperatures();
 
-  // Read the request (we ignore the content in this example)
-  while (client.available()) client.read();
+      String data = createDataString();
 
-  sensorsDS.requestTemperatures();    // Command to get temperatures
-  
-  // Allocate JsonBuffer
-  // Use arduinojson.org/assistant to compute the capacity.
-  StaticJsonBuffer<300> jsonBuffer;
+  reqClient.println(F("HTTP/1.1 200 OK"));
+  reqClient.println(F("Content-Type: application/json"));
+  reqClient.print(F("Content-Length: "));
+  reqClient.println(data.length());
+  reqClient.println();
+  reqClient.print(data);
 
-  // Create the root object
-  JsonObject& root = jsonBuffer.createObject();
+  reqClient.stop();
+}
 
-  root["deviceId"] = DEVICE_ID;
-  root["version"] = VERSION;
-  
-  root["boiler-wood-pressure"] = String(getPressureData(), 2);        //  давление у насоса ТТ
-  root["boiler-wood-tempSmoke"] = getPT100Data(PT100_1_PIN, PT100_1_CALIBRATION); //  темп-ра выходящих газов
-  root["boiler-wood-temp"] = getPT100Data(PT100_2_PIN, PT100_2_CALIBRATION);      //  темп-ра дымохода
-  root["boiler-wood-flow"] = getFlowData();                                      //  скорость потока воды в контуре ТТ
-  root["ds18Out"] = String(sensorsDS.getTempCByIndex(1),2);  //  темп-ра на выходе ТТ
-  root["ds18In"] = String(sensorsDS.getTempCByIndex(0),1);  //  темп-ра на входе ТТ
-  root["ds18FromTA"] = String(sensorsDS.getTempCByIndex(2),1);  //  темп-ра воды от ТА
+/*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*\
+            createDataString
+\*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*/
+String createDataString()
+{
+  String resultData;
+  resultData.concat(F("{"));
+  resultData.concat(F("\n\"deviceId\":"));
+  //  resultData.concat(String(DEVICE_ID));
+  resultData.concat(F("\"boiler-wood\""));
+  resultData.concat(F(","));
+  resultData.concat(F("\n\"version\":"));
+  resultData.concat((int)VERSION);
+  resultData.concat(F(","));
+  resultData.concat(F("\n\"freeRam\":"));
+  resultData.concat(freeRam());
+  resultData.concat(F(","));
+  resultData.concat(F("\n\"data\": {"));
+  resultData.concat(F("\n\"boiler-wood-pressure\":"));
+  resultData.concat(String(getPressureData(), 2));
+  resultData.concat(F(","));
+  resultData.concat(F("\n\"boiler-wood-tempSmoke\":"));
+  resultData.concat(String(getPT100Data(PT100_1_PIN, PT100_1_CALIBRATION)));
+  resultData.concat(F(","));
+  resultData.concat(F("\n\"boiler-wood-tempPT100\":"));
+  resultData.concat(String(getPT100Data(PT100_2_PIN, PT100_2_CALIBRATION)));
 
-  root["freeRam "] = freeRam();
-  Serial.print(F("Sending: "));
-  root.printTo(Serial);
-  Serial.println();
+  resultData.concat(F(","));
+  resultData.concat(F("\n\"freeRamDS-1\":"));
+  resultData.concat(freeRam());
 
-  // Write response headers
-  client.println("HTTP/1.0 200 OK");
-  client.println("Content-Type: application/json");
-  client.println("Connection: close");
-  client.println();
+  for (uint8_t index = 0; index < ds18DeviceCount; index++)
+  {
+    DeviceAddress deviceAddress;
+    ds18Sensors.getAddress(deviceAddress, index);
+    String stringAddr = dsAddressToString(deviceAddress);
+    resultData.concat(F(",\n\""));
+    resultData.concat(stringAddr);
+    resultData.concat(F("\":"));
+    resultData.concat(ds18Sensors.getTempC(deviceAddress));
+  }
 
-  // Write JSON document
-  root.prettyPrintTo(client);
+  resultData.concat(F(","));
+  resultData.concat(F("\n\"freeRamDS-2\":"));
+  resultData.concat(freeRam());
 
-  // Disconnect
-  client.stop();
+  for (uint8_t index = 0; index < ds18DeviceCount; index++)
+  {
+    DeviceAddress deviceAddress;
+    ds18Sensors.getAddress(deviceAddress, index);
+
+    resultData.concat(F(",\n\""));
+    for (uint8_t i = 0; i < 8; i++)
+    {
+
+      resultData.concat(deviceAddress[i]);
+    }
+    resultData.concat(F("\":"));
+    resultData.concat(ds18Sensors.getTempC(deviceAddress));
+  }
+  resultData.concat(F(","));
+  resultData.concat(F("\n\"freeRamDS-3\":"));
+  resultData.concat(freeRam());
+
+  for (uint8_t index = 0; index < ds18DeviceCount; index++)
+  {
+    DeviceAddress deviceAddress;
+    ds18Sensors.getAddress(deviceAddress, index);
+    
+    resultData.concat(F(",\n\""));
+    for (uint8_t i = 0; i < 8; i++)
+    {
+  //         if (deviceAddress[i] < 16) resultData.concat("0");
+      
+      resultData.concat(String(deviceAddress[i], HEX));
+    }
+    resultData.concat(F("\":"));
+    resultData.concat(ds18Sensors.getTempC(deviceAddress));
+  }
+  resultData.concat(F(","));
+  resultData.concat(F("\n\"freeRamDS-4\":"));
+  resultData.concat(freeRam());
+
+  resultData.concat(F(","));
+  resultData.concat(F("\n\"boiler-wood-flow\":"));
+  resultData.concat(String(getFlowData()));
+  resultData.concat(F(","));
+  resultData.concat(F("\n\"freeRamEnd\":"));
+  resultData.concat(freeRam());
+
+  resultData.concat(F("\n}"));
+  resultData.concat(F("\n}"));
+
+  return resultData;
+}
+
+/*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*\
+            ds18RequestTemperatures
+\*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*/
+void ds18RequestTemperatures()
+{
+  if (ds18ConversionTimer.onRestart())
+  {
+    ds18Sensors.requestTemperatures();
+  }
+}
+
+/*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*\
+            dsAddressToString
+\*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*/
+String dsAddressToString(DeviceAddress deviceAddress)
+{
+  String address;
+  for (uint8_t i = 0; i < 8; i++)
+  {
+    if (deviceAddress[i] < 16)
+      address += "0";
+    address += String(deviceAddress[i], HEX);
+  }
+  return address;
 }
 
 /*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*\
