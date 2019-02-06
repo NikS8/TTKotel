@@ -13,6 +13,7 @@
 04.02.2019 v10 добавлена функция freeRam()
 06.02.2019 v11 добавлен префикс к переменным "boiler-wood-"
 06.02.2019 v12 структура JSON без <ArduinoJson.h>
+06.02.2019 v13 изменение вывода №№ DS18 и префикс заменен на "bw-"
 \*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*/
 /*******************************************************************\
 Сервер tt-server ArduinoJson выдает данные: 
@@ -32,7 +33,7 @@
 #include <RBD_Timer.h>
 
 #define DEVICE_ID "boiler-wood"
-#define VERSION 12
+#define VERSION 13
 
 #define RESET_UPTIME_TIME 43200000 //  = 30 * 24 * 60 * 60 * 1000 \
                                    // reset after 30 days uptime
@@ -44,6 +45,8 @@ EthernetServer httpServer(40246);
 // PT100 - temperature sensors
 // pressure sensor
 // DS18D20 - array of temperature sensors
+
+#define PIN_PRESSURE_SENSOR A0
 
 #define PIN_ONE_WIRE_BUS 9
 uint8_t ds18Precision = 11;
@@ -60,12 +63,12 @@ volatile long flowSensorPulseCount = 0;
 unsigned long currentTime;
 unsigned long flowSensorLastTime;
 
-#define PT100_1_PIN A1
-#define PT100_2_PIN A2
+#define PIN_PT100_1 A1
+//#define PT100_2_PIN A2
 //#define PT100_1_CALIBRATION 165
 //#define PT100_2_CALIBRATION 1005
-#define PT100_1_CALIBRATION 128
-#define PT100_2_CALIBRATION 1000
+#define PT100_1_CALIBRATION 122
+//#define PT100_2_CALIBRATION 1000
 #define koefB 2.6           // B-коэффициент 0.385 (1/0.385=2.6)
 #define data0PT100 100      // сопротивления PT100 при 0 градусах
 #define data25PT100 109.73  // сопротивления PT100 при 25 градусах
@@ -80,7 +83,8 @@ void setup() {
   Serial.begin(9600);
   while (!Serial) continue;
 
-  pinMode( A1, INPUT );
+  pinMode(PIN_PRESSURE_SENSOR, INPUT);
+  pinMode(PIN_PT100_1, INPUT);
 
   pinMode(PIN_FLOW_SENSOR, INPUT);
   //digitalWrite(PIN_FLOW_SENSOR, HIGH);
@@ -187,39 +191,17 @@ String createDataString()
   resultData.concat(F(","));
   resultData.concat(F("\n\"version\":"));
   resultData.concat((int)VERSION);
-  resultData.concat(F(","));
-  resultData.concat(F("\n\"freeRam\":"));
-  resultData.concat(freeRam());
+
   resultData.concat(F(","));
   resultData.concat(F("\n\"data\": {"));
-  resultData.concat(F("\n\"boiler-wood-pressure\":"));
+
+  resultData.concat(F("\n\"bw-pressure\":"));
   resultData.concat(String(getPressureData(), 2));
-  resultData.concat(F(","));
-  resultData.concat(F("\n\"boiler-wood-tempSmoke\":"));
-  resultData.concat(String(getPT100Data(PT100_1_PIN, PT100_1_CALIBRATION)));
-  resultData.concat(F(","));
-  resultData.concat(F("\n\"boiler-wood-tempPT100\":"));
-  resultData.concat(String(getPT100Data(PT100_2_PIN, PT100_2_CALIBRATION)));
 
   resultData.concat(F(","));
-  resultData.concat(F("\n\"freeRamDS-1\":"));
-  resultData.concat(freeRam());
-
-  for (uint8_t index = 0; index < ds18DeviceCount; index++)
-  {
-    DeviceAddress deviceAddress;
-    ds18Sensors.getAddress(deviceAddress, index);
-    String stringAddr = dsAddressToString(deviceAddress);
-    resultData.concat(F(",\n\""));
-    resultData.concat(stringAddr);
-    resultData.concat(F("\":"));
-    resultData.concat(ds18Sensors.getTempC(deviceAddress));
-  }
-
-  resultData.concat(F(","));
-  resultData.concat(F("\n\"freeRamDS-2\":"));
-  resultData.concat(freeRam());
-
+  resultData.concat(F("\n\"bw-tPT100-smoke\":"));
+  resultData.concat(String(getPT100Data(PIN_PT100_1, PT100_1_CALIBRATION)));
+   
   for (uint8_t index = 0; index < ds18DeviceCount; index++)
   {
     DeviceAddress deviceAddress;
@@ -228,40 +210,20 @@ String createDataString()
     resultData.concat(F(",\n\""));
     for (uint8_t i = 0; i < 8; i++)
     {
+      if (deviceAddress[i] < 16) resultData.concat("0");
 
-      resultData.concat(deviceAddress[i]);
-    }
-    resultData.concat(F("\":"));
-    resultData.concat(ds18Sensors.getTempC(deviceAddress));
-  }
-  resultData.concat(F(","));
-  resultData.concat(F("\n\"freeRamDS-3\":"));
-  resultData.concat(freeRam());
-
-  for (uint8_t index = 0; index < ds18DeviceCount; index++)
-  {
-    DeviceAddress deviceAddress;
-    ds18Sensors.getAddress(deviceAddress, index);
-    
-    resultData.concat(F(",\n\""));
-    for (uint8_t i = 0; i < 8; i++)
-    {
-  //         if (deviceAddress[i] < 16) resultData.concat("0");
-      
       resultData.concat(String(deviceAddress[i], HEX));
     }
     resultData.concat(F("\":"));
     resultData.concat(ds18Sensors.getTempC(deviceAddress));
   }
+ 
   resultData.concat(F(","));
-  resultData.concat(F("\n\"freeRamDS-4\":"));
-  resultData.concat(freeRam());
+  resultData.concat(F("\n\"bw-flow\":"));
+  resultData.concat(String(getFlowData()));
 
   resultData.concat(F(","));
-  resultData.concat(F("\n\"boiler-wood-flow\":"));
-  resultData.concat(String(getFlowData()));
-  resultData.concat(F(","));
-  resultData.concat(F("\n\"freeRamEnd\":"));
+  resultData.concat(F("\n\"freeRam\":"));
   resultData.concat(freeRam());
 
   resultData.concat(F("\n}"));
@@ -282,38 +244,23 @@ void ds18RequestTemperatures()
 }
 
 /*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*\
-            dsAddressToString
-\*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*/
-String dsAddressToString(DeviceAddress deviceAddress)
-{
-  String address;
-  for (uint8_t i = 0; i < 8; i++)
-  {
-    if (deviceAddress[i] < 16)
-      address += "0";
-    address += String(deviceAddress[i], HEX);
-  }
-  return address;
-}
-
-/*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*\
             function to measurement pressure
 \*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*/
 float getPressureData() {
 
   unsigned int avg_sum=0;
   for(byte i=0; i<8; i++){
-  avg_sum += analogRead(A0);
+    avg_sum += analogRead(PIN_PRESSURE_SENSOR);
   }
   float aA0 = avg_sum / 8;
-  Serial.print(" aA0");
+  Serial.print(F(" aA0"));
   Serial.println(aA0);
  
 // перевод значений в атм [(sensorPressTankFrom - 0,1*1023) / (1,6*1023/9,8)]
   float pressure = ((aA0 - 102.3) / 167);
   //  sensorPressTankFrom = (sensorPressTankFrom * 0.0048875);    //  Напряжение в вольтах 0-5В
   //  sensorPressTankFrom = (sensorPressTankFrom * 0.0259);
-  Serial.print("   sensorPress = ");
+  Serial.print(F("   sensorPress = "));
   Serial.println(pressure);
 
   return pressure;
@@ -347,7 +294,7 @@ int getPT100Data (int analogPin, int nominalR) {
   float temp = resistancePT100;
   temp -= data0PT100;
   int tempPT100 = temp * koefB; // *B
-  Serial.print("   tempPT100 = ");
+  Serial.print(F("   tempPT100 = "));
   Serial.println(tempPT100);
 
   return tempPT100;
