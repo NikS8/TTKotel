@@ -290,7 +290,7 @@ String createDataString()
   resultData.concat(F(",\n\"upTime\":\""));
   resultData.concat(upTime(millis()));
   
-  resultData.concat(F("\n}"));
+  resultData.concat(F("\"\n}"));
 
   return resultData;
 }
