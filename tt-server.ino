@@ -1,5 +1,5 @@
 /*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*\
-                                                    tt-server.ino 
+                                                      tt-server.ino 
                               Copyright © 2018-2019, Zigfred & Nik.S
 05.12.2018 1
 06.12.2018 2 add DS18B20
@@ -14,6 +14,9 @@
 06.02.2019 v11 добавлен префикс к переменным "boiler-wood-"
 06.02.2019 v12 структура JSON без <ArduinoJson.h>
 06.02.2019 v13 изменение вывода №№ DS18 и префикс заменен на "bw-"
+14.02.2019 v14 заменен датчик PT100, откалиброван
+02.03.2019 v15 add PT1000-smoke
+06.03.2019 v16 add HX711 for PT100, dell PT1000 
 \*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*/
 /*******************************************************************\
 Сервер tt-server ArduinoJson выдает данные: 
@@ -25,26 +28,19 @@
     датчики температуры DS18B20
 /*******************************************************************/
 
-//#include <ArduinoJson.h>
 #include <Ethernet2.h>
-#include <SPI.h>
 #include <OneWire.h>
 #include <DallasTemperature.h>
 #include <RBD_Timer.h>
+#include <HX711.h>    //https://github.com/bogde/HX711
 
 #define DEVICE_ID "boiler-wood"
-#define VERSION 13
+#define VERSION 16
 
 #define RESET_UPTIME_TIME 43200000 //  = 30 * 24 * 60 * 60 * 1000 \
                                    // reset after 30 days uptime
-
 byte mac[] = {0xDE, 0xAD, 0xBE, 0xEF, 0xFF, 0xED};
 EthernetServer httpServer(40246);
-
-// YF-B5 - flow sensor
-// PT100 - temperature sensors
-// pressure sensor
-// DS18D20 - array of temperature sensors
 
 #define PIN_PRESSURE_SENSOR A0
 
@@ -63,18 +59,22 @@ volatile long flowSensorPulseCount = 0;
 unsigned long currentTime;
 unsigned long flowSensorLastTime;
 
-#define PIN_PT100_1 A1
-//#define PT100_2_PIN A2
-//#define PT100_1_CALIBRATION 165
-//#define PT100_2_CALIBRATION 1005
-#define PT100_1_CALIBRATION 122
-//#define PT100_2_CALIBRATION 1000
-#define koefB 2.6           // B-коэффициент 0.385 (1/0.385=2.6)
-#define data0PT100 100      // сопротивления PT100 при 0 градусах
-#define data25PT100 109.73  // сопротивления PT100 при 25 градусах
-uint16_t temp;
-RBD::Timer ds18ConversionTimer;
+#define UMIN  100000
+#define UMAX 9000000
+#define RMIN    40.0
+#define RMAX   700.0
 
+const long  Uu = 1842181;    // Rohmesswert unteres Ende  
+const long  Uo = 4777449;    // Rohmesswert oberes Ende 
+const float Ru = 109.0;  // Widerstandswert unteres Ende
+const float Ro = 400.0;  // Widerstandswert oberes Ende
+
+long Umess;
+float Rx, tempPT100;
+
+HX711 get_U;
+
+RBD::Timer ds18ConversionTimer;
 
 /*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*\
             setup
@@ -84,7 +84,7 @@ void setup() {
   while (!Serial) continue;
 
   pinMode(PIN_PRESSURE_SENSOR, INPUT);
-  pinMode(PIN_PT100_1, INPUT);
+ // pinMode(PIN_PT100_1, INPUT);
 
   pinMode(PIN_FLOW_SENSOR, INPUT);
   //digitalWrite(PIN_FLOW_SENSOR, HIGH);
@@ -112,17 +112,78 @@ void setup() {
 \*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*/
 void getSettings()
 {
-//  String responseText = doRequest(settingsServiceUri, "");
-  // TODO parse settings and fill values to variables
-  //intervalLogServicePeriod = 10000;
-  //settingsServiceUri
-  //intervalLogServiceUri
-  //ds18Precision
   ds18Sensors.requestTemperatures();
-  //intervalLogServiceTimer.setTimeout(intervalLogServicePeriod);
-  //intervalLogServiceTimer.restart();
   ds18ConversionTimer.setTimeout(DS18_CONVERSION_TIME);
   ds18ConversionTimer.restart();
+  ////////////////
+  int i;
+  long buf = 0;
+  long U = 0;
+  Serial.println(F("HX711 Temperaturmessung mit Pt100 Widerstandsthermometer"));
+  get_U.begin(6, 5, 32);
+
+  // Abgleich Messbereichsgrenze unten
+  if (Uu <= UMIN || Ru == RMIN) {
+    Serial.println(F("Widerstand fuer untere Messbereichsgrenze eingesetzt ??"));
+    Serial.println(F("Messung fuer Messbereichsgrenze unten laeuft - bitte warten ..."));
+    for (i = 0; i < 5; i++) {
+      U = get_U.read_average(40);
+      buf = buf + U;
+      Serial.print(U); Serial.print(" ");
+    }
+    if (buf / 5 < UMIN || buf / 5 > UMAX) {
+      Serial.println(); Serial.println();
+      Serial.println(F("Messfehler, bitte Schaltung ueberpruefen"));
+      while (1);
+    }
+    else {
+      Serial.println(); Serial.println();
+      Serial.print(F( "Bitte "));
+      Serial.print(buf / 5);
+      Serial.println(F( " bei Variable 'Uu' und den Wert des eingesetzten Widerstandes in Ohm bei Variable 'Ru' eintragen "));
+      Serial.println(F("Dann das Programm neu hochladen"));
+      Serial.println();
+      while (1);
+    }
+  }
+
+  // Abgleich Messbereichsgrenze oben
+  if (Uo <= UMIN || Ro == RMIN) {
+    Serial.println(F("Widerstand fuer obere Messbereichsgrenze eingesetzt ??"));
+    Serial.println(F("Messung fuer Messbereichsgrenze oben laeuft - bitte warten ..."));
+    for (i = 0; i < 5; i++) {
+      U = get_U.read_average(40);
+      buf = buf + U;
+      Serial.print(U); Serial.print(" ");
+    }
+    if (buf / 5 < UMIN || buf / 5 > UMAX) {
+      Serial.println(); Serial.println();
+      Serial.println(F("Messfehler, bitte Schaltung ueberpruefen"));
+      while (1);
+    }
+    else {
+      Serial.println(); Serial.println();
+      Serial.print(F( "Bitte "));
+      Serial.print(buf / 5);
+      Serial.println(F( " bei Variable 'Uo' und den Wert des eingesetzten Widerstandes in Ohm  bei Variable 'Ro' eintragen "));
+      Serial.println(F("Dann das Programm neu hochladen"));
+      Serial.println();
+      while (1);
+    }
+  }
+
+  // Prüfung der Abgleichwerte
+  if ( Uu < UMIN || Uu > UMAX || Uo < UMIN || Uo > UMAX || Ru < RMIN || Ru > RMAX || Ro < RMIN || Ro > RMAX ||
+       Uu > Uo || Uo < Uu || Ru > Ro || Ro < Ru) {
+    Serial.println(F( "Abgleichfehler - Bitte Abgleich wiederholen"));
+    Serial.println();
+    while (1);
+  }
+  else {
+    Serial.println(F( "Abgleich plausiebel"));
+    Serial.println();
+  }
+  //////////////
 }
 
 /*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*\
@@ -135,7 +196,6 @@ void loop() {
 
   realTimeService();
 }
-
 
 /*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*\
             my functions
@@ -166,7 +226,7 @@ void realTimeService()
     reqClient.read();
   ds18RequestTemperatures();
 
-      String data = createDataString();
+  String data = createDataString();
 
   reqClient.println(F("HTTP/1.1 200 OK"));
   reqClient.println(F("Content-Type: application/json"));
@@ -200,8 +260,8 @@ String createDataString()
 
   resultData.concat(F(","));
   resultData.concat(F("\n\"bw-tPT100-smoke\":"));
-  resultData.concat(String(getPT100Data(PIN_PT100_1, PT100_1_CALIBRATION)));
-   
+  resultData.concat(String(getPT100Data()));
+
   for (uint8_t index = 0; index < ds18DeviceCount; index++)
   {
     DeviceAddress deviceAddress;
@@ -221,12 +281,12 @@ String createDataString()
   resultData.concat(F(","));
   resultData.concat(F("\n\"bw-flow\":"));
   resultData.concat(String(getFlowData()));
+  resultData.concat(F("\n}"));
 
   resultData.concat(F(","));
   resultData.concat(F("\n\"freeRam\":"));
   resultData.concat(freeRam());
-
-  resultData.concat(F("\n}"));
+  
   resultData.concat(F("\n}"));
 
   return resultData;
@@ -253,10 +313,7 @@ float getPressureData() {
     avg_sum += analogRead(PIN_PRESSURE_SENSOR);
   }
   float aA0 = avg_sum / 8;
-  Serial.print(F(" aA0"));
-  Serial.println(aA0);
- 
-// перевод значений в атм [(sensorPressTankFrom - 0,1*1023) / (1,6*1023/9,8)]
+ // перевод значений в атм [(sensorPressTankFrom - 0,1*1023) / (1,6*1023/9,8)]
   float pressure = ((aA0 - 102.3) / 167);
   //  sensorPressTankFrom = (sensorPressTankFrom * 0.0048875);    //  Напряжение в вольтах 0-5В
   //  sensorPressTankFrom = (sensorPressTankFrom * 0.0259);
@@ -264,40 +321,6 @@ float getPressureData() {
   Serial.println(pressure);
 
   return pressure;
-}
-
-/*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*\
-            function to measurement temperature PT100
-\*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*/
-int getPT100Data (int analogPin, int nominalR) {
-
-  // float koefB = 2.6; // B-коэффициент 0.385 (1/0.385=2.6)
-  // int nominalR = 212; // сопротивление дополнительного резистора
-  // int data0PT100 = 100; // сопротивления PT100 при 0 градусах
-  //Формула R = nominalR * analogRead(Pin) / (1023 - analogRead(Pin))
-
-  unsigned int avg_sum=0;
-  for(byte i=0;i<8;i++){
-  avg_sum+=analogRead(analogPin);
-  }
-  float valuePT100 = avg_sum / 8;
-//  Serial.print("  valuePT100 = ");
-//  Serial.print(valuePT100);
-
-  float resistancePT100 = 1023.0 - valuePT100;
-  resistancePT100 = nominalR / resistancePT100;
-  resistancePT100 *= valuePT100;
-      //  Serial.print("  resistancePT100 = ");
-      //  Serial.print(resistancePT100);
-
- //     float temp = log(resistancePT100 - data0PT100) + resistancePT100;
-  float temp = resistancePT100;
-  temp -= data0PT100;
-  int tempPT100 = temp * koefB; // *B
-  Serial.print(F("   tempPT100 = "));
-  Serial.println(tempPT100);
-
-  return tempPT100;
 }
 
 /*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*\
@@ -317,8 +340,6 @@ int getFlowData() {
 
   //detachInterrupt(flowSensorInterrupt);
   detachInterrupt(PIN_INTERRUPT_FLOW_SENSOR);
-  //     flowSensorPulsesPerSecond = (1000 * flowSensorPulseCount / (millis() - flowSensorLastTime));
-  //    flowSensorPulsesPerSecond = (flowSensorPulseCount * 1000 / deltaTime);
   flowSensorPulsesPerSecond = flowSensorPulseCount;
   flowSensorPulsesPerSecond *= 1000;
   flowSensorPulsesPerSecond /= deltaTime; //  количество за секунду
@@ -339,6 +360,54 @@ void flowSensorPulseCounter()
   flowSensorPulseCount++;
 }
 
+/*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*\
+            function to measurement temperature PT100
+\*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*/
+int getPT100Data () {
+
+  float k1, k2, k3, k4, k5, k6, k7, k8, k9;
+  
+  // Messwert für die Spannung an Rx einlesen
+  Umess = get_U.read();
+
+  // Aus der gemessenen Spannung den Widerstand Rx ausrechnen
+  if (Umess >= UMIN && Umess <= UMAX) {
+    Rx = ((((Ro - Ru) / (Uo - Uu)) * (Umess - Uu)) + Ru );
+    //Serial.print("Umess = "); Serial.print(Umess); Serial.print("  ");
+    Serial.print("R = ");     Serial.print(Rx, 3);   Serial.print(" Ohm   ->   ");
+
+    // Temperatur für Rx >= 100 Ohm berechnen
+    if (Rx >= 100.0) {
+      k1 = 3.90802 * pow(10, -1);
+      k2 = 2 * 5.802 * pow(10, -5);
+      k3 = pow(3.90802 * pow(10, -1), 2);
+      k4 = 4.0 * (pow(5.802 * pow(10, -5), 2));
+      k5 = Rx - 100.0;
+      k6 = 5.802 * pow(10, -5);
+
+      k7 = k1 / k2;
+      k8 = (k3 / k4) - (k5 / k6);
+      k9 = sqrt(k8);
+
+      tempPT100 = k7 - k9;
+    }
+    // Temperatur für Rx < 100 Ohm berechnen
+    else {
+      k1 = pow (Rx, 5) * 1.597 * pow(10, -10);
+      k2 = pow (Rx, 4) * 2.951 * pow(10, -8);
+      k3 = pow (Rx, 3) * 4.784 * pow(10, -6);
+      k4 = pow (Rx, 2) * 2.613 * pow(10, -3);
+      k5 = 2.219 * Rx - 241.9;
+
+      tempPT100 = k1 - k2 - k3 + k4 + k5;
+    }
+    Serial.print("tempPT100 = ");     Serial.print(tempPT100, 3);   Serial.println(" GrdC");
+  }
+  else {
+    Serial.println("Messfehler");
+  }
+  return tempPT100;
+}
 /*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*\
             Количество свободной памяти
 \*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*/
