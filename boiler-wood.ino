@@ -1,5 +1,5 @@
 /*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*\
-                                                                  tt-server.ino 
+                                                               boiler-wood.ino 
                                         Copyright © 2018-2019, Zigfred & Nik.S
 05.12.2018 1
 06.12.2018 2 add DS18B20
@@ -18,6 +18,7 @@
 02.03.2019 v15 add PT1000-smoke
 06.03.2019 v16 add HX711 for PT100, dell PT1000 
 10.03.2019 v17 время работы после включения
+13.11.2019 v18 переход на статические IP
 \*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*/
 /*****************************************************************************\
 Сервер tt-server ArduinoJson выдает данные: 
@@ -36,12 +37,13 @@
 #include <HX711.h>    //https://github.com/bogde/HX711
 
 #define DEVICE_ID "boiler-wood"
-#define VERSION 17
+#define VERSION 18
 
 #define RESET_UPTIME_TIME 43200000 //  = 30 * 24 * 60 * 60 * 1000 \
                                    // reset after 30 days uptime
-byte mac[] = {0xDE, 0xAD, 0xBE, 0xEF, 0xFF, 0xED};
-EthernetServer httpServer(40246);
+byte mac[] = {0xCA, 0x74, 0xC0, 0xFF, 0xBD, 0x01};
+IPAddress ip(192, 168, 1, 111);
+EthernetServer httpServer(40111);
 
 #define PIN_PRESSURE_SENSOR A0
 
@@ -65,10 +67,10 @@ unsigned long flowSensorLastTime;
 #define RMIN    40.0
 #define RMAX   700.0
 
-const long  Uu = 1842181;    // Rohmesswert unteres Ende  
-const long  Uo = 4777449;    // Rohmesswert oberes Ende 
-const float Ru = 109.0;  // Widerstandswert unteres Ende
-const float Ro = 400.0;  // Widerstandswert oberes Ende
+const long  Uu = 1557878;//1563838;//1568248;//1842181;    // Rohmesswert unteres Ende  
+const long  Uo = 4792792;//4777449;    // Rohmesswert oberes Ende 
+const float Ru = 110.5;  // Widerstandswert unteres Ende
+const float Ro = 333.0;  // Widerstandswert oberes Ende
 
 long Umess;
 float Rx, tempPT100;
@@ -82,7 +84,15 @@ RBD::Timer ds18ConversionTimer;
 \*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*/
 void setup() {
   Serial.begin(9600);
-  while (!Serial) continue;
+  Serial.println("Serial.begin(9600)"); 
+
+  Ethernet.begin(mac,ip);
+  
+  Serial.println(F("Server is ready."));
+  Serial.print(F("Please connect to http://"));
+  Serial.println(Ethernet.localIP());
+  
+  httpServer.begin();
 
   pinMode(PIN_PRESSURE_SENSOR, INPUT);
  // pinMode(PIN_PT100_1, INPUT);
@@ -91,16 +101,7 @@ void setup() {
   //digitalWrite(PIN_FLOW_SENSOR, HIGH);
   attachInterrupt(PIN_INTERRUPT_FLOW_SENSOR, flowSensorPulseCounter, FALLING);
   sei();
-
-  if (!Ethernet.begin(mac)) {
-    Serial.println(F("Failed to initialize Ethernet library"));
-    return;
-  }
-  httpServer.begin();
-  Serial.println(F("Server is ready."));
-  Serial.print(F("Please connect to http://"));
-  Serial.println(Ethernet.localIP());
-
+  
 //  initOneWire();
   ds18Sensors.begin();
   ds18DeviceCount = ds18Sensors.getDeviceCount();
